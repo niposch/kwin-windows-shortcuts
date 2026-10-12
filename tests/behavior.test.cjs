@@ -29,7 +29,14 @@ function environment(state = 'none', maximizeMode = 0) {
     }
     tile(state);
     window.maximizeMode = maximizeMode;
-    const workspace = {activeWindow: window};
+    function signal() {
+        const handlers = [];
+        return { connect: callback => handlers.push(callback), emit: (...args) => handlers.forEach(callback => callback(...args)) };
+    }
+    const workspace = {
+        activeWindow: window, windowActivated: signal(), windowRemoved: signal(),
+        currentDesktopChanged: signal(), currentActivityChanged: signal()
+    };
     for (const [method, name] of Object.entries({Left: 'left', Right: 'right', TopLeft: 'top-left',
         TopRight: 'top-right', BottomLeft: 'bottom-left', BottomRight: 'bottom-right'})) {
         workspace['slotWindowQuickTile' + method] = () => { calls.push(['tile', name]); tile(name); };
@@ -132,4 +139,90 @@ test('window capabilities are respected', () => {
     for (const direction of ['up', 'down', 'left', 'right', 'monitor-left']) e.script.handle(direction);
     assert.deepEqual(e.calls, []);
     assert.equal(e.window.minimized, false);
+});
+
+function minimizeWithFallback(e, fallback) {
+    let minimized = false;
+    Object.defineProperty(e.window, 'minimized', {
+        get: () => minimized,
+        set: value => {
+            minimized = value;
+            if (value) {
+                e.workspace.activeWindow = fallback;
+                e.workspace.windowActivated.emit(fallback);
+            }
+        }
+    });
+    e.script.handle('down');
+    assert.equal(e.window.minimized, true);
+    assert.equal(e.workspace.activeWindow, fallback);
+}
+
+test('Up recalls the script-minimized window without maximizing its focus fallback', () => {
+    const e = environment();
+    const fallback = environment().window;
+    minimizeWithFallback(e, fallback);
+    e.script.handle('up');
+    assert.equal(e.window.minimized, false);
+    assert.equal(e.window.maximizeMode, 0);
+    assert.equal(e.workspace.activeWindow, e.window);
+    assert.equal(fallback.maximizeMode, 0);
+    e.script.handle('up');
+    assert.equal(e.window.maximizeMode, 3);
+});
+test('Up can recall when no window remains focused', () => {
+    const e = environment();
+    minimizeWithFallback(e, null);
+    e.script.handle('up');
+    assert.equal(e.window.minimized, false);
+    assert.equal(e.workspace.activeWindow, e.window);
+});
+test('a deliberate focus change cancels recall, even after switching back', () => {
+    const e = environment();
+    const fallback = environment().window;
+    minimizeWithFallback(e, fallback);
+    const other = environment().window;
+    e.workspace.activeWindow = other; e.workspace.windowActivated.emit(other);
+    e.workspace.activeWindow = fallback; e.workspace.windowActivated.emit(fallback);
+    e.script.handle('up');
+    assert.equal(e.window.minimized, true);
+    assert.equal(fallback.maximizeMode, 3);
+});
+test('another arrow action cancels recall', () => {
+    const e = environment();
+    const fallback = environment().window;
+    minimizeWithFallback(e, fallback);
+    e.script.handle('monitor-right');
+    e.script.handle('up');
+    assert.equal(e.window.minimized, true);
+    assert.equal(fallback.maximizeMode, 3);
+});
+test('closing the minimized window releases it before a subsequent Up', () => {
+    const e = environment();
+    const fallback = environment().window;
+    minimizeWithFallback(e, fallback);
+    e.workspace.windowRemoved.emit(e.window);
+    Object.defineProperty(e.window, 'maximizeMode', {get: () => { throw new Error('closed window accessed'); }});
+    e.script.handle('up');
+    assert.equal(fallback.maximizeMode, 3);
+});
+test('desktop/activity changes cancel recall', () => {
+    for (const name of ['currentDesktopChanged', 'currentActivityChanged']) {
+        const e = environment();
+        const fallback = environment().window;
+        minimizeWithFallback(e, fallback);
+        e.workspace[name].emit();
+        e.script.handle('up');
+        assert.equal(e.window.minimized, true);
+        assert.equal(fallback.maximizeMode, 3);
+    }
+});
+test('manual unminimization does not hijack Up on the fallback', () => {
+    const e = environment();
+    const fallback = environment().window;
+    minimizeWithFallback(e, fallback);
+    e.window.minimized = false;
+    e.script.handle('up');
+    assert.equal(e.workspace.activeWindow, fallback);
+    assert.equal(fallback.maximizeMode, 3);
 });

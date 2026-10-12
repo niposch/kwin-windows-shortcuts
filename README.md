@@ -37,6 +37,7 @@ KWin 6.7.5, Wayland. Older Plasma releases have different tiling APIs.
 | Win+Left / Right | Snap to a side; native KWin corner/adjacent-monitor cycling |
 | Win+Up | Maximize; repeated Up stays maximized |
 | Win+Down | Restore maximized window, then minimize on the next press |
+| Win+Down to minimize, then Win+Up | Bring that window back at its previous size; another Up maximizes |
 | Side-snapped + Win+Up / Down | Upper/lower corner on that side |
 | Upper corner + Win+Down | Return to the side half |
 | Lower corner + Win+Up | Return to the side half |
@@ -46,6 +47,11 @@ KWin 6.7.5, Wayland. Older Plasma releases have different tiling APIs.
 
 “Win” is KDE's Meta key. Existing Meta+PgUp/PgDown and Meta+Backspace remain
 available. Meta+Alt+arrows still focus neighboring windows.
+
+The recall applies to the most recent window minimized by this script. It survives
+KWin's automatic focus fallback, but ends when you switch to another window,
+desktop or activity, close the tracked window, or use another arrow action.
+It does not recall windows minimized with the mouse or other shortcuts.
 
 The goal is comfortable Windows-like behavior, not an exact Windows clone.
 No Snap Assist chooser, snap groups or Win+Z overlay. Repeated horizontal keys
@@ -57,7 +63,8 @@ must be forwarded to the Linux desktop by the client.
 ## Quick test
 
 1. In a normal window: Win+Up twice, then Win+Down. It should stay maximized
-   through both Up presses and restore on Down. Another Down minimizes.
+   through both Up presses and restore on Down. Another Down minimizes. Up brings
+   that window back at its original size, and another Up maximizes it.
 2. Win+Left, Up: upper-left quarter. Down: left half. Down: lower-left quarter.
    Down again: original size. Repeat with Right.
 3. Win+Shift+Left/Right: move to the neighboring screen while retaining the
@@ -80,6 +87,8 @@ Optional live tests require PySide6 and move only a disposable test window:
 ```sh
 QT_QPA_PLATFORM=wayland /usr/bin/python3 tests/live-smoke.py
 QT_QPA_PLATFORM=xcb /usr/bin/python3 tests/live-smoke.py
+QT_QPA_PLATFORM=wayland /usr/bin/python3 tests/live-recall.py
+QT_QPA_PLATFORM=xcb /usr/bin/python3 tests/live-recall.py
 ```
 
 Node is only required for development tests. The runtime script is original code;

@@ -4,7 +4,7 @@
         "Id": "kwin-windows-shortcuts",
         "Name": "Windows-style Window Shortcuts",
         "Description": "Familiar Win+arrow maximize, restore, snap and monitor shortcuts",
-        "Version": "0.1.0",
+        "Version": "0.1.1",
         "License": "MIT",
         "Authors": [{"Name": "niposch"}],
         "Website": "https://github.com/niposch/kwin-windows-shortcuts",

@@ -5,6 +5,32 @@
 var WindowsShortcuts = (function () {
     "use strict";
 
+    var pendingRecall = null;
+    var minimizing = false;
+
+    function forgetRecall() { pendingRecall = null; }
+
+    workspace.windowActivated.connect(function (window) {
+        // KWin's focus fallback during our minimize is expected. A subsequent
+        // deliberate focus change ends this one-step undo opportunity.
+        if (pendingRecall && !minimizing && window !== pendingRecall.fallback) forgetRecall();
+    });
+    workspace.windowRemoved.connect(function (window) {
+        if (pendingRecall && (window === pendingRecall.window || window === pendingRecall.fallback)) forgetRecall();
+    });
+    workspace.currentDesktopChanged.connect(forgetRecall);
+    workspace.currentActivityChanged.connect(forgetRecall);
+
+    function recallMinimized() {
+        var recall = pendingRecall;
+        forgetRecall();
+        if (!recall || !recall.window.minimized || workspace.activeWindow !== recall.fallback) return false;
+        recall.window.minimized = false;
+        if (recall.window.minimized) return false; // Window rules can deny restoration.
+        workspace.activeWindow = recall.window;
+        return true;
+    }
+
     function close(a, b) { return Math.abs(a - b) < 0.01; }
 
     // Read KWin's requested tile, rather than guessing from pixel dimensions.
@@ -34,6 +60,10 @@ var WindowsShortcuts = (function () {
     }
 
     function handle(direction) {
+        // Recall must run before the active-window guard: the last ordinary
+        // window may have been minimized, leaving only the desktop focused.
+        if (direction === "up" && recallMinimized()) return;
+        if (direction !== "up") forgetRecall();
         var window = workspace.activeWindow;
         if (!window || window.specialWindow || window.fullScreen || window.move || window.resize) return;
         if (direction === "monitor-left" || direction === "monitor-right") {
@@ -66,7 +96,15 @@ var WindowsShortcuts = (function () {
             } else if (window.tile || window.maximizeMode !== 0) {
                 restore(window);
             } else if (window.minimizable) {
-                window.minimized = true;
+                minimizing = true;
+                try {
+                    pendingRecall = { window: window, fallback: null };
+                    window.minimized = true;
+                    if (window.minimized && pendingRecall) pendingRecall.fallback = workspace.activeWindow;
+                    else forgetRecall();
+                } finally {
+                    minimizing = false;
+                }
             }
         }
     }
