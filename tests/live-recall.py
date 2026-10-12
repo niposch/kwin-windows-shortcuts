@@ -22,7 +22,7 @@ plugin = "windows-shortcuts-recall-test-" + token
 service = "org.kde.WindowsShortcutsRecallTest"
 reports = []
 windows = {}
-commands = ["prepare", "down", "up", "switch", "inspect"]
+commands = ["prepare", "activate-b", "activate-a", "down", "up", "switch", "inspect"]
 
 
 def pump(seconds):
@@ -58,6 +58,13 @@ pump(.5)
 
 source = (ROOT / "package/contents/code/main.js").read_text()
 source = source.replace("registerShortcut(", "smokeRegisterShortcut(")
+old_export = "return { handle: handle, tileState: tileState };"
+assert old_export in source
+source = source.replace(old_export, """return { handle: handle, tileState: tileState,
+    smokeCanRecall: function() {
+        return !!(pendingRecall && pendingRecall.window.minimized && workspace.activeWindow === pendingRecall.fallback);
+    }
+};""")
 prefix = "var smokeCallbacks = {}; function smokeRegisterShortcut(id, text, key, cb) { smokeCallbacks[key] = cb; }\n"
 harness = '''
 function findTest(label) {
@@ -70,7 +77,7 @@ function describe(window) {
 }
 function reportTest(error) {
     var active = workspace.activeWindow;
-    var state = {error: error || null, active: active ? "external" : "none"};
+    var state = {error: error || null, active: active ? "external" : "none", recallReady: WindowsShortcuts.smokeCanRecall()};
     ["a", "b", "c"].forEach(function(label) {
         var window = findTest(label);
         state[label] = describe(window);
@@ -78,7 +85,7 @@ function reportTest(error) {
     });
     callDBus("org.kde.WindowsShortcutsRecallTest", "/Recall", "org.kde.WindowsShortcutsRecallTest", "Report", JSON.stringify(state));
 }
-["prepare", "down", "up", "switch", "inspect"].forEach(function(command) {
+["prepare", "activate-b", "activate-a", "down", "up", "switch", "inspect"].forEach(function(command) {
     // Empty sequences: these callbacks are reachable only through this test's
     // uniquely named D-Bus actions, never through physical keys.
     registerShortcut(PLUGIN + command, "Disposable recall test " + command, "", function() {
@@ -88,12 +95,15 @@ function reportTest(error) {
             if (command === "prepare") {
                 if (!a || !b || !c) throw new Error("Test windows missing");
                 [a, b, c].forEach(function(w) { w.minimized = false; w.setMaximize(false, false); });
+            } else if (command === "activate-b") {
                 workspace.activeWindow = b;
+            } else if (command === "activate-a") {
                 workspace.activeWindow = a;
             } else if (command === "switch") {
                 workspace.activeWindow = c;
             } else if (command === "down" || command === "up") {
-                if (active && active !== a && active !== b && active !== c) throw new Error("User changed focus; aborting test action");
+                if (active && active !== a && active !== b && active !== c &&
+                    !(command === "up" && WindowsShortcuts.smokeCanRecall())) throw new Error("User changed focus; aborting test action");
                 if (command === "down" && active !== a) throw new Error("Down requires test window A");
                 smokeCallbacks[command === "down" ? "Meta+Down" : "Meta+Up"]();
             }
@@ -135,9 +145,16 @@ with tempfile.TemporaryDirectory(prefix="kwin-recall-test-") as temp:
             pump(.2)
             return invoke("inspect")
 
-        original = step("prepare")
+        def prepare():
+            step("prepare")
+            # Xwayland activation/configure messages are asynchronous. Establish
+            # the MRU fallback in separate event-loop turns before minimizing A.
+            step("activate-b")
+            return step("activate-a")
+
+        original = prepare()
         minimized = step("down")
-        assert minimized["a"]["minimized"] and minimized["active"] == "b", minimized
+        assert minimized["a"]["minimized"] and minimized["recallReady"], minimized
         restored = step("up")
         assert not restored["a"]["minimized"] and restored["active"] == "a", restored
         assert restored["a"]["max"] == restored["b"]["max"] == 0, restored
@@ -146,13 +163,13 @@ with tempfile.TemporaryDirectory(prefix="kwin-recall-test-") as temp:
         maximized = step("up")
         assert maximized["a"]["max"] == 3 and maximized["b"]["max"] == 0, maximized
         print("PASS another Up maximizes A, leaving fallback B unchanged")
-        step("prepare")
+        prepare()
         step("down")
         step("switch")
         switched = step("up")
         assert switched["a"]["minimized"] and switched["c"]["max"] == 3, switched
         print("PASS deliberate focus change cancels recall; Up acts on C")
-        step("prepare")
+        prepare()
         step("down")
         windows["a"].close()
         pump(.2)
