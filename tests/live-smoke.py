@@ -77,7 +77,10 @@ if (ACTION || RESET) {
         if (target.tile) target.tile.unmanage(target);
         target.setMaximize(false, false);
     }
-    if (ACTION) smokeCallbacks[ACTION]();
+    if (ACTION === "place-rightmost" || ACTION === "place-leftmost") {
+        var sorted = workspace.screens.slice().sort(function(a, b) { return a.geometry.x - b.geometry.x; });
+        workspace.sendClientToScreen(target, ACTION === "place-rightmost" ? sorted[sorted.length - 1] : sorted[0]);
+    } else if (ACTION) smokeCallbacks[ACTION]();
     if (previous && previous !== target) workspace.activeWindow = previous;
 }
 var g = target.frameGeometry;
@@ -86,7 +89,7 @@ var result = {state: WindowsShortcuts.tileState(target), max: target.maximizeMod
     geometry: [g.x, g.y, g.width, g.height]};
 callDBus("org.kde.WindowsShortcutsSmoke", "/Smoke", "org.kde.WindowsShortcutsSmoke", "Report", JSON.stringify(result));
 '''
-        header = "var TITLE = " + json.dumps(title) + "; var ACTION = " + json.dumps(keys.get(action)) + "; var RESET = " + json.dumps(reset) + ";\n"
+        header = "var TITLE = " + json.dumps(title) + "; var ACTION = " + json.dumps(keys.get(action, action)) + "; var RESET = " + json.dumps(reset) + ";\n"
         path.write_text(prefix + source + header + body)
         sid = desktop.scripting("loadScript", "(ss)", (str(path), probe_name))[0]
         assert sid >= 0
@@ -106,9 +109,18 @@ callDBus("org.kde.WindowsShortcutsSmoke", "/Smoke", "org.kde.WindowsShortcutsSmo
         pump(.2)
         return probe()
 
-    def expect(action, state, max_mode=0, minimized=False):
+    def expect(action, state, max_mode=0, minimized=False, output=None):
         r = step(action)
-        assert (r["state"], r["max"], r["minimized"]) == (state, max_mode, minimized), (action, r)
+        deadline = time.monotonic() + 2
+        def matches():
+            return ((r["state"], r["max"], r["minimized"]) == (state, max_mode, minimized)
+                    and (output is None or r["output"] == output))
+        # Window configure acknowledgments can arrive after the action's D-Bus
+        # report, especially for Xwayland. Poll state without replaying the key.
+        while not matches() and time.monotonic() < deadline:
+            pump(.05)
+            r = probe()
+        assert matches(), (action, r)
         print("PASS", action, state, "max=" + str(max_mode), "minimized=" + str(minimized))
         return r
 
@@ -134,6 +146,27 @@ callDBus("org.kde.WindowsShortcutsSmoke", "/Smoke", "org.kde.WindowsShortcutsSmo
             expect("down", "bottom-" + side)
             restored = expect("down", "none")
             assert restored["geometry"] == original["geometry"], (original, restored)
+        # Repeated side snapping crosses outputs through a different KWin path
+        # than Shift+arrows and can retain an older tile restore rectangle.
+        for direction, opposite, placement in [("left", "right", "place-rightmost"), ("right", "left", "place-leftmost")]:
+            probe(reset=True)
+            pump(.2)
+            step(placement)
+            expect(direction, direction)
+            origin = probe()
+            crossed = step(direction)
+            if crossed["output"] == origin["output"]:
+                print("SKIP repeated-snap test: no adjacent output")
+                continue
+            assert crossed["state"] == opposite, crossed
+            for action, state, max_mode in [
+                ("up", "top-" + opposite, 0), ("down", opposite, 0),
+                ("down", "bottom-" + opposite, 0), ("up", opposite, 0),
+                ("up", "top-" + opposite, 0), ("up", "none", 3), ("down", "none", 0)
+            ]:
+                result = expect(action, state, max_mode, output=crossed["output"])
+                assert result["output"] == crossed["output"], (crossed, result)
+            print("PASS repeated", direction, "crossing: all untile/maximize/restore transitions stay on target")
         before = probe()
         left = step("monitor-left")
         if left["output"] != before["output"]:
@@ -141,8 +174,11 @@ callDBus("org.kde.WindowsShortcutsSmoke", "/Smoke", "org.kde.WindowsShortcutsSmo
             snapped = probe()
             moved = expect("monitor-right", "left")
             assert moved["output"] != snapped["output"], (snapped, moved)
-            expect("up", "top-left")
-            expect("up", "none", 3)
+            target_output = moved["output"]
+            quarter = expect("up", "top-left", output=target_output)
+            assert quarter["output"] == target_output, (moved, quarter)
+            maximized_on_target = expect("up", "none", 3, output=target_output)
+            assert maximized_on_target["output"] == target_output, (moved, maximized_on_target)
             maximized = probe()
             moved = expect("monitor-left", "none", 3)
             assert moved["output"] != maximized["output"], (maximized, moved)

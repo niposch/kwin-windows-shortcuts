@@ -48,8 +48,25 @@ var WindowsShortcuts = (function () {
         return "custom";
     }
 
+    function untileOnCurrentOutput(window) {
+        var tile = window.tile;
+        if (!tile) return;
+        // Repeated side snapping can move the tile to a different output while
+        // leaving the restore rectangle on the original one. Also, output may
+        // still describe the previous committed frame during a rapid key chain.
+        var geometry = tile.absoluteGeometry;
+        var output = geometry ? workspace.screenAt({
+            x: geometry.x + geometry.width / 2,
+            y: geometry.y + geometry.height / 2
+        }) : window.output;
+        tile.unmanage(window);
+        // Native migration translates the restored rectangle (and future
+        // restore geometry) to this output, preserving size and window rules.
+        if (output) workspace.sendClientToScreen(window, output);
+    }
+
     function restore(window) {
-        if (window.tile) window.tile.unmanage(window);
+        untileOnCurrentOutput(window);
         if (window.maximizeMode !== 0) window.setMaximize(false, false);
     }
 
@@ -84,7 +101,7 @@ var WindowsShortcuts = (function () {
             } else if (state === "bottom-left" || state === "bottom-right") {
                 half(window, state.slice(7));
             } else {
-                if (window.tile) window.tile.unmanage(window);
+                untileOnCurrentOutput(window);
                 // Idempotent: holding Up on a maximized window never restores it.
                 window.setMaximize(true, true);
             }

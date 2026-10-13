@@ -226,3 +226,34 @@ test('manual unminimization does not hijack Up on the fallback', () => {
     assert.equal(e.workspace.activeWindow, fallback);
     assert.equal(fallback.maximizeMode, 3);
 });
+
+for (const [state, direction, finalState] of [
+    ['top-right', 'up', 'none'], ['top-left', 'down', 'left'],
+    ['bottom-left', 'up', 'left'], ['bottom-right', 'down', 'none']
+]) {
+    test(`${state} ${direction} stays on the requested tile output after stale restoration`, () => {
+        const e = environment(state);
+        const original = {name: 'original'};
+        const destination = {name: 'destination'};
+        // Committed frame/output lags behind the requested tile; negative
+        // coordinates also ensure output selection doesn't assume screen zero.
+        e.window.output = original;
+        e.window.tile.absoluteGeometry = {x: -1600, y: -300, width: 800, height: 600};
+        e.workspace.screenAt = point => {
+            assert.deepEqual(JSON.parse(JSON.stringify(point)), {x: -1200, y: 0});
+            return destination;
+        };
+        const unmanage = e.window.tile.unmanage;
+        e.window.tile.unmanage = w => { unmanage(w); w.output = original; };
+        e.workspace.sendClientToScreen = (w, output) => { assert.equal(w, e.window); w.output = output; };
+        const maximize = e.window.setMaximize;
+        e.window.setMaximize = function(v, h) {
+            if (v && h) assert.equal(this.output, destination, 'migrate before maximizing');
+            maximize.call(this, v, h);
+        };
+        e.script.handle(direction);
+        assert.equal(e.window.output, destination);
+        assert.equal(e.script.tileState(e.window), finalState);
+        if (direction === 'up' && state === 'top-right') assert.equal(e.window.maximizeMode, 3);
+    });
+}

@@ -77,6 +77,11 @@ it doesn't cache pixel rectangles or monitor IDs. Installation uses KGlobalAccel
 live D-Bus API and saves only conflicting shortcut assignments. State files stay
 outside the repository.
 
+Leaving a tile preserves its destination monitor, including after repeated
+Win+Left/Right monitor cycling. KWin's older restore rectangle is translated to
+that monitor before maximizing or restoring; rapid key sequences use the requested
+tile's output rather than a previous frame's committed output.
+
 ```sh
 node --test tests/behavior.test.cjs
 python3 tools/manage.py status
